@@ -2,7 +2,8 @@ import psycopg2
 import pandas as pd
 import openpyxl
 import numpy as np
-from sklearn.impute import KNNImputer
+from sklearn.experimental import enable_iterative_imputer
+from sklearn.impute import IterativeImputer
 
 
 def groups(x):
@@ -48,6 +49,8 @@ try:
     pivot_ratings = all_ratings.pivot_table(index=['userID'], columns=['restaurantID'], values='rating')
     print(pivot_ratings)
 
+    # Aquest for es per cada grup de clusterin, del 0 al 9.
+    count = 0
     all_users_predicted = pd.DataFrame(columns=['userID', 'restaurantID'])
     for count in range(10):
         # Legim les dades de cadascun dels excels.
@@ -55,7 +58,6 @@ try:
 
         # Per cada excel iterem el usuaries que pertanyen a cada grup de kmeans del 0 al 99.
         for i in range(100):
-            print(str(count) + '-' + str(i) + ':' + str(100))
             # Agafem tota l'informació de cada kmeans.
             all_group_data = group_data.loc[group_data['k-means'] == i]
 
@@ -68,50 +70,56 @@ try:
             final_df = pd.DataFrame(columns=['restaurantID', 'rating'])
 
             # Iterem tots els usuaris del grup I.
-            all_users_ratings = pd.DataFrame(columns=['restaurantID', 'rating'])
-            template_df = pd.DataFrame(columns=['userID', 'restaurantID'])
-            template_df_concat = pd.DataFrame(columns=['userID', 'restaurantID'])
-            temporal_user = pd.DataFrame(columns=['userID', 'restaurantID'])
-            temporal_rating = np.ndarray(0)
             for num_user in range(user_group_id.size):
+                print(str(num_user) + ':' + str(user_group_id.size))
                 # Aqui agafem els restaurants i les putuacions de l'usuari que volem omplir les dades buides.
                 rating_user = pivot_ratings.loc[[user_group_id['userID'].values[num_user]], :].stack(
                     dropna=False).to_numpy()
                 pred_user = pd.DataFrame(columns=['restaurantID', 'rating'])
                 pred_user['restaurantID'] = np.arange(1, 101, dtype=np.int64)
                 pred_user['rating'] = rating_user
-                template_df['restaurantID'] = 'Restaurant' + pred_user['restaurantID'].astype(str)
-                template_df['userID'] = 'User' + user_group_id['userID'].values[num_user].astype(str)
-                temporal_user = pd.concat([temporal_user, template_df])
 
-                template_df_concat = pd.concat([template_df_concat, template_df])
-                all_users_ratings = pd.concat([all_users_ratings, pred_user])
+                # Comprovem que l'usuari té puntuacions buides.
+                if pred_user['rating'].isna().sum() != 0:
+                    # Agafem tots els altres usuaris i els guardem al conjunt de dades.
+                    for x in np.append(np.arange(0, num_user), np.arange(num_user + 1, user_group_id.size)):
+                        rating_user = pivot_ratings.loc[[user_group_id['userID'].values[x]], :].stack(
+                            dropna=False).to_numpy()
+                        aux_df = pd.DataFrame(columns=['restaurantID', 'rating'])
+                        aux_df['restaurantID'] = np.arange(1, 101, dtype=np.int64)
+                        aux_df['rating'] = rating_user
+                        final_df = pd.concat([final_df, aux_df])
 
-                if num_user % 10 == 0 and num_user != 0 and num_user + 10 < user_group_id['userID'].size - 1:
-                    inputer = KNNImputer(n_neighbors=all_users_ratings.size, weights='distance')
-                    inputer_output = inputer.fit_transform(all_users_ratings)[:, 1]
-                    temporal_user.reset_index(drop=True, inplace=True)
-                    temporal_user['rating'] = pd.Series(inputer_output)
-                    temporal_rating = np.concatenate([temporal_rating, inputer_output])
+                    # Omplim les dades de l'usuari que hem trobat.
+                    final_series = final_df.to_numpy()
+                    imp = IterativeImputer(max_iter=10, random_state=0)
+                    imp.fit(final_series)
+                    X_test = pred_user.to_numpy()
+                    user_predicted = pd.DataFrame(data=imp.transform(X_test), columns=['restaurantID', 'rating'])
+                    user_predicted['userID'] = 'User' + str(user_group_id['userID'].values[num_user])
+                    user_predicted['restaurantID'] = 'Restaurant' + pred_user['restaurantID'].astype(str)
+                    all_users_predicted = pd.concat([all_users_predicted, user_predicted])
 
-                    template_df = pd.DataFrame(columns=['userID', 'restaurantID'])
-                    all_users_ratings = pd.DataFrame(columns=['restaurantID', 'rating'])
+        break
+    all_users_predicted.to_csv('C:\\Users\\Sancho\\Desktop\\predicted.csv', index=False)
 
-                elif num_user == user_group_id['userID'].size - 1:
-                    inputer = KNNImputer(n_neighbors=all_users_ratings.size, weights='distance')
-                    inputer_output = inputer.fit_transform(all_users_ratings)[:, 1]
-                    temporal_user.reset_index(drop=True, inplace=True)
-                    temporal_user['rating'] = pd.Series(inputer_output)
-                    temporal_rating = np.concatenate([temporal_rating, inputer_output])
+    '''
+    for i in range(10):
+        current_group = user_group_mean[user_group_mean['group'] != i].index
+        user_group_mean_9 = user_group_mean.drop(current_group)
+        user_group_mean_9.set_index('userID', inplace=True)
 
-                    template_df = pd.DataFrame(columns=['userID', 'restaurantID'])
-                    all_users_ratings = pd.DataFrame(columns=['restaurantID', 'rating'])
-
-            template_df_concat.reset_index(drop=True, inplace=True)
-            template_df_concat['rating'] = pd.Series(temporal_rating)
-            all_users_predicted = pd.concat([all_users_predicted, template_df_concat])
-
-    all_users_predicted.to_csv('C:\\Users\\Sancho\\Desktop\\predicted_neighbours10.csv', index=False)
+        X = user_group_mean_9.to_numpy()
+        size = int(user_group_mean_9['group'].size)
+        size = int(size / 2)
+        km = KMeans(
+            n_clusters=size, init='random',
+            n_init=10, max_iter=300, random_state=0
+        )
+        y_km = km.fit_predict(X)
+        user_group_mean_9['k-means'] = y_km
+        user_group_mean_9.to_excel(r'C:\\Users\\Sancho\\Desktop\\group' + str(i) + '.xlsx')
+    '''
 
 except Exception as e:
     print(e)

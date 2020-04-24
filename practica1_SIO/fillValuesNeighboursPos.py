@@ -68,7 +68,7 @@ try:
 
         final_df = final_df.append(info_user[['restaurantID', 'rating']], ignore_index=True)
 
-        if i % 10 == 0 and i != 0 and i + 10 < user_pos.size - 1:
+        if i % 10 == 0 and i != 0 and i + 10 < user_pos['userID'].size - 1:
             template_df_concat['isnan'] = template_df_concat['rating'].apply(lambda x: np.isnan(x))
             template_df_concat.reset_index(drop=True, inplace=True)
             lon = i - x
@@ -79,7 +79,7 @@ try:
             template_df_nan = template_df_nan.append(template_df_concat[template_df_concat['isnan'] == True],
                                                      ignore_index=True)
 
-        elif i == user_pos.size - 1:
+        elif i == user_pos['userID'].size - 1:
             template_df_concat['isnan'] = template_df_concat['rating'].apply(lambda x: np.isnan(x))
             template_df_concat.reset_index(drop=True, inplace=True)
             lon = i - x
