@@ -26,6 +26,7 @@ from surprise.accuracy import rmse
 from surprise import accuracy
 from surprise.model_selection import train_test_split
 import psycopg2
+import re
 
 try:
     connection = psycopg2.connect(user="postgres",
@@ -110,6 +111,66 @@ try:
         tmp = tmp.append(pd.Series([str(algorithm).split(' ')[0].split('.')[-1]], index=['Algorithm']))
         benchmark.append(tmp)
     
+    surprise_results = pd.DataFrame(benchmark).set_index('Algorithm').sort_values('test_rmse')
+    
+    all_data = Dataset.load_from_df(all_ratings[['userID', 'restaurantID', 'rating']], reader)
+    trainset, testset = train_test_split(all_data, test_size=0.25) 
+    algo = SVD()
+    predictions = algo.fit(trainset).test(testset)
+    accuracy.mae(predictions)
+    
+    
+    trainset = algo.trainset
+    
+    def get_Iu(uid):
+        """ return the number of items rated by given user
+        args: 
+          uid: the id of the user
+        returns: 
+          the number of items rated by the user
+        """
+        try:
+            return len(trainset.ur[trainset.to_inner_uid(uid)])
+        except ValueError: # user was not part of the trainset
+            return 0
+        
+    def get_Ui(iid):
+        """ return number of users that have rated given item
+        args:
+          iid: the raw id of the item
+        returns:
+          the number of users that have rated the item.
+        """
+        try: 
+            return len(trainset.ir[trainset.to_inner_iid(iid)])
+        except ValueError:
+            return 0
+        
+    df = pd.DataFrame(predictions, columns=['uid', 'iid', 'rui', 'est', 'details'])
+    df['Iu'] = df.uid.apply(get_Iu)
+    df['Ui'] = df.iid.apply(get_Ui)
+    df['err'] = abs(df.est - df.rui)
+    
+    sampledf = pd.read_csv('..\..\PlantillaPrediccions.csv', sep = ';', names = ['userID', 'restaurantID', 'rating'])
+    sampledf_all = sampledf.copy()
+    sampledf['userID'] = sampledf['userID'].apply(lambda x: re.findall('\d+', x )[0])
+    sampledf['restaurantID'] = sampledf['restaurantID'].apply(lambda x: re.findall('\d+', x )[0])
+    
+    sample_list = sampledf.drop('rating', axis = 1)
+    
+    pred_list = []
+    
+    for uid, iid in sample_list.itertuples(index=False):
+        pred = algo.predict(int(uid), int(iid), r_ui=0, verbose=True)
+        pred_dict = {'userID' : uid, 'restaurantID' : iid, 'rating' : format(float(pred.est), '.4f')}
+        pred_list.append(pred_dict)
+        
+    final_df = pd.DataFrame(pred_list)
+       
+    final_df['userID'] = sampledf_all['userID']
+    final_df['restaurantID'] = sampledf_all['restaurantID']  
+
+    final_df.to_csv('..\\..\\tokenName3.csv', sep = ';', header = False, index = False)      
     
 except Exception as e:
     print(e)
